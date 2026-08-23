@@ -240,3 +240,83 @@ async def test_create_session_without_model_does_not_force_model_flag(
     assert attempted_models == [None]
 
     await manager.cleanup_all()
+
+
+@pytest.mark.asyncio
+async def test_start_passes_json_schema_and_isolation_flags(monkeypatch):
+    captured = {}
+
+    class FakeProc:
+        returncode = 0
+        stdout = None
+        stderr = None
+        stdin = None
+
+        def terminate(self):
+            pass
+
+        async def wait(self):
+            return 0
+
+    async def fake_exec(*cmd, **_kwargs):
+        captured["cmd"] = list(cmd)
+        return FakeProc()
+
+    async def fake_read(self):
+        await self.output_queue.put(None)
+
+    monkeypatch.setattr(cm.asyncio, "create_subprocess_exec", fake_exec)
+    monkeypatch.setattr(cm.ClaudeProcess, "_read_output", fake_read)
+    monkeypatch.setattr(cm.ClaudeProcess, "_read_error", fake_read)
+
+    process = cm.ClaudeProcess(session_id="s", project_path="/tmp")
+    ok = await process.start(
+        prompt="p",
+        system_prompt="sys",
+        json_schema={"type": "object"},
+        isolate_tools=True,
+    )
+    assert ok is True
+    cmd = captured["cmd"]
+    assert cmd[cmd.index("--json-schema") + 1] == '{"type": "object"}'
+    assert cmd[cmd.index("--tools") + 1] == ""
+    assert "--strict-mcp-config" in cmd
+    assert cmd[cmd.index("--setting-sources") + 1] == ""
+    await process.stop()
+
+
+@pytest.mark.asyncio
+async def test_start_omits_tool_flags_by_default(monkeypatch):
+    captured = {}
+
+    class FakeProc:
+        returncode = 0
+        stdout = stderr = stdin = None
+
+        def terminate(self):
+            pass
+
+        async def wait(self):
+            return 0
+
+    async def fake_exec(*cmd, **_kwargs):
+        captured["cmd"] = list(cmd)
+        return FakeProc()
+
+    async def fake_read(self):
+        await self.output_queue.put(None)
+
+    monkeypatch.setattr(cm.asyncio, "create_subprocess_exec", fake_exec)
+    monkeypatch.setattr(cm.ClaudeProcess, "_read_output", fake_read)
+    monkeypatch.setattr(cm.ClaudeProcess, "_read_error", fake_read)
+
+    process = cm.ClaudeProcess(session_id="s", project_path="/tmp")
+    assert await process.start(prompt="p") is True
+    for flag in (
+        "--json-schema",
+        "--tools",
+        "--strict-mcp-config",
+        "--setting-sources",
+    ):
+        assert flag not in captured["cmd"]
+    await process.stop()

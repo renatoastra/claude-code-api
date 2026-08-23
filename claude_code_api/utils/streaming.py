@@ -453,3 +453,48 @@ def create_non_streaming_response(
     )
 
     return response
+
+
+def completion_to_sse_chunks(response: Dict[str, Any]) -> List[str]:
+    """Replay a finished chat.completion as a short OpenAI SSE chunk sequence.
+
+    Used in function-calling mode, where the whole CLI run must finish before
+    the structured ``tool_calls`` payload is known.
+    """
+    choice = (response.get("choices") or [{}])[0]
+    message = choice.get("message") or {}
+    base = {
+        "id": response.get("id"),
+        "object": CHUNK_OBJECT_TYPE,
+        "created": response.get("created"),
+        "model": response.get("model"),
+    }
+
+    def chunk(delta: Dict[str, Any], finish_reason: Optional[str] = None) -> str:
+        return SSEFormatter.format_event(
+            {
+                **base,
+                "choices": [
+                    {"index": 0, "delta": delta, "finish_reason": finish_reason}
+                ],
+            }
+        )
+
+    chunks = [chunk({"role": "assistant", "content": ""})]
+    if message.get("content"):
+        chunks.append(chunk({"content": message["content"]}))
+    tool_calls = message.get("tool_calls") or []
+    if tool_calls:
+        chunks.append(
+            chunk(
+                {
+                    "tool_calls": [
+                        {**call, "index": index}
+                        for index, call in enumerate(tool_calls)
+                    ]
+                }
+            )
+        )
+    chunks.append(chunk({}, finish_reason=choice.get("finish_reason") or "stop"))
+    chunks.append(SSEFormatter.format_completion())
+    return chunks

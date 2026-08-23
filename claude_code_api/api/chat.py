@@ -28,8 +28,16 @@ from claude_code_api.utils.parser import (
     normalize_claude_message,
 )
 from claude_code_api.utils.streaming import (
+    completion_to_sse_chunks,
     create_non_streaming_response,
     create_sse_response,
+)
+from claude_code_api.utils.tool_calling import (
+    TOOL_RESPONSE_SCHEMA,
+    build_tools_system_prompt,
+    extract_tool_response,
+    render_conversation,
+    tools_enabled,
 )
 
 logger = structlog.get_logger()
@@ -145,6 +153,7 @@ async def _collect_non_streaming_response(
     session_id: str,
     model: str,
     project_id: str,
+    tool_mode: bool = False,
 ) -> Dict[str, Any]:
     messages, parser = await _gather_claude_messages(claude_process)
     _log_message_summary(messages)
@@ -157,8 +166,40 @@ async def _collect_non_streaming_response(
     response = _build_non_streaming_response(
         messages, session_id, model, usage_summary, project_id
     )
+    if tool_mode:
+        _apply_tool_response(response, messages)
     _log_response_payload(response)
     return response
+
+
+def _apply_tool_response(response: Dict[str, Any], messages: list) -> None:
+    """Replace the choice payload with the StructuredOutput-derived one."""
+    extracted = extract_tool_response(messages)
+    choice = response["choices"][0]
+    if extracted is None:
+        # No structured block: strip any leaked StructuredOutput tool_call and
+        # keep the plain-text answer.
+        choice["message"].pop("tool_calls", None)
+        choice["finish_reason"] = "stop"
+        logger.warning(
+            "Tool mode run produced no structured output",
+            session_id=response.get("session_id"),
+        )
+        return
+    content, tool_calls = extracted
+    choice["message"]["content"] = content
+    if tool_calls:
+        choice["message"]["tool_calls"] = tool_calls
+        choice["finish_reason"] = "tool_calls"
+    else:
+        choice["message"].pop("tool_calls", None)
+        choice["finish_reason"] = "stop"
+
+
+async def _stream_tool_mode_response(**collect_kwargs):
+    response = await _collect_non_streaming_response(**collect_kwargs)
+    for chunk in completion_to_sse_chunks(response):
+        yield chunk
 
 
 async def _gather_claude_messages(claude_process) -> Tuple[list, ClaudeOutputParser]:
@@ -292,6 +333,7 @@ async def create_chat_completion(request: ChatCompletionRequest, req: Request) -
         stream=request.stream,
         project_id=request.project_id,
         session_id=request.session_id,
+        tools_count=len(request.tools or []),
     )
 
     try:
@@ -303,6 +345,12 @@ async def create_chat_completion(request: ChatCompletionRequest, req: Request) -
         response_model = claude_model or get_default_model()
 
         user_prompt, system_prompt = _extract_prompts(request)
+        tool_mode = tools_enabled(request.tools, request.tool_choice)
+        if tool_mode:
+            system_prompt = build_tools_system_prompt(
+                request.tools, request.tool_choice, system_prompt
+            )
+            user_prompt = render_conversation(request.messages)
 
         # Handle project context
         project_id = request.project_id or f"default-{client_id}"
@@ -330,6 +378,8 @@ async def create_chat_completion(request: ChatCompletionRequest, req: Request) -
                 model=claude_model,
                 system_prompt=system_prompt,
                 on_cli_session_id=_register_cli_session,
+                json_schema=TOOL_RESPONSE_SCHEMA if tool_mode else None,
+                isolate_tools=tool_mode,
             )
         except ClaudeSessionConflictError as e:
             logger.warning(
@@ -380,8 +430,21 @@ async def create_chat_completion(request: ChatCompletionRequest, req: Request) -
 
         # Handle streaming vs non-streaming
         if request.stream:
+            if tool_mode:
+                body = _stream_tool_mode_response(
+                    claude_process=claude_process,
+                    session_manager=session_manager,
+                    session_id=api_session_id,
+                    model=response_model,
+                    project_id=project_id,
+                    tool_mode=True,
+                )
+            else:
+                body = create_sse_response(
+                    api_session_id, response_model, claude_process
+                )
             return StreamingResponse(
-                create_sse_response(api_session_id, response_model, claude_process),
+                body,
                 media_type="text/event-stream",
                 headers={
                     "Cache-Control": "no-cache",
@@ -398,6 +461,7 @@ async def create_chat_completion(request: ChatCompletionRequest, req: Request) -
             session_id=api_session_id,
             model=response_model,
             project_id=project_id,
+            tool_mode=tool_mode,
         )
 
     except HTTPException:

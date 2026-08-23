@@ -1,6 +1,12 @@
 [
   {
     "match": [
+      "openwiki indexing pipeline"
+    ],
+    "file": "claude_stream_structured_tool_calls.jsonl"
+  },
+  {
+    "match": [
       "mapping test",
       "session map"
     ],

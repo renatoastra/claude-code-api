@@ -46,8 +46,15 @@ class ClaudeProcess:
         prompt: str,
         model: Optional[str] = None,
         system_prompt: Optional[str] = None,
+        json_schema: Optional[Dict[str, Any]] = None,
+        isolate_tools: bool = False,
     ) -> bool:
-        """Start Claude Code process and wait for completion."""
+        """Start Claude Code process and wait for completion.
+
+        ``json_schema`` forces structured output via ``--json-schema``.
+        ``isolate_tools`` disables Claude's built-in tools, user MCP servers and
+        user settings/hooks so that only client-provided tools are in play.
+        """
         self.last_error = None
         try:
             # Prepare real command - using exact format from working Claudia example
@@ -59,6 +66,14 @@ class ClaudeProcess:
 
             if model:
                 cmd.extend(["--model", model])
+
+            if json_schema is not None:
+                cmd.extend(["--json-schema", json.dumps(json_schema)])
+
+            if isolate_tools:
+                cmd.extend(
+                    ["--tools", "", "--strict-mcp-config", "--setting-sources", ""]
+                )
 
             # Always use stream-json output format (exact order from working example)
             cmd.extend(
@@ -86,7 +101,7 @@ class ClaudeProcess:
                     safe_cmd.append("<redacted>")
                     redact_next = False
                     continue
-                if part in ("-p", "--system-prompt"):
+                if part in ("-p", "--system-prompt", "--json-schema"):
                     safe_cmd.append(part)
                     redact_next = True
                     continue
@@ -440,6 +455,8 @@ class ClaudeManager:
         selected_model: Optional[str],
         system_prompt: Optional[str],
         on_cli_session_id: Optional[Callable[[str], None]],
+        json_schema: Optional[Dict[str, Any]] = None,
+        isolate_tools: bool = False,
     ) -> ClaudeProcess:
         model_candidates = self._build_model_candidates(selected_model)
         last_error = "Failed to start Claude process"
@@ -450,11 +467,16 @@ class ClaudeManager:
                 project_path=project_path,
                 on_cli_session_id=on_cli_session_id,
             )
-            success = await process.start(
-                prompt=prompt,
-                model=candidate_model,
-                system_prompt=system_prompt,
-            )
+            start_kwargs: Dict[str, Any] = {
+                "prompt": prompt,
+                "model": candidate_model,
+                "system_prompt": system_prompt,
+            }
+            if json_schema is not None:
+                start_kwargs["json_schema"] = json_schema
+            if isolate_tools:
+                start_kwargs["isolate_tools"] = True
+            success = await process.start(**start_kwargs)
 
             if success:
                 self.processes[session_id] = process
@@ -502,6 +524,8 @@ class ClaudeManager:
         model: Optional[str] = None,
         system_prompt: Optional[str] = None,
         on_cli_session_id: Optional[Callable[[str], None]] = None,
+        json_schema: Optional[Dict[str, Any]] = None,
+        isolate_tools: bool = False,
     ) -> ClaudeProcess:
         """Create new Claude session."""
         async with self._session_lock:
@@ -515,6 +539,8 @@ class ClaudeManager:
                 selected_model=model,
                 system_prompt=system_prompt,
                 on_cli_session_id=on_cli_session_id,
+                json_schema=json_schema,
+                isolate_tools=isolate_tools,
             )
 
     async def _stop_session_locked(self, session_id: str) -> None:
