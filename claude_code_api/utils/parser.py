@@ -41,15 +41,34 @@ def _text_from_part(part: Any) -> Optional[str]:
     return None
 
 
+def _as_int(value: Any) -> int:
+    try:
+        return int(value or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
 class ClaudeOutputParser:
     """Parser for Claude Code JSONL output."""
 
     def __init__(self):
         self.session_id: Optional[str] = None
         self.model: Optional[str] = None
-        self.total_tokens = 0
+        self.input_tokens = 0
+        self.cache_creation_input_tokens = 0
+        self.cache_read_input_tokens = 0
+        self.output_tokens = 0
         self.total_cost = 0.0
         self.message_count = 0
+
+    @property
+    def total_tokens(self) -> int:
+        return (
+            self.input_tokens
+            + self.cache_creation_input_tokens
+            + self.cache_read_input_tokens
+            + self.output_tokens
+        )
 
     def parse_line(self, line: str) -> Optional[ClaudeMessage]:
         """Parse a single JSONL line."""
@@ -79,14 +98,24 @@ class ClaudeOutputParser:
         if message.model and not self.model:
             self.model = message.model
 
-        # Track metrics
+        # Only the `result` line carries top-level usage, and it is already the
+        # aggregate of the run. With prompt caching nearly every prompt token is
+        # reported under cache_creation/cache_read, not input_tokens.
         if message.usage:
-            input_tokens = message.usage.get("input_tokens", 0)
-            output_tokens = message.usage.get("output_tokens", 0)
-            self.total_tokens += input_tokens + output_tokens
+            self.input_tokens += _as_int(message.usage.get("input_tokens"))
+            self.cache_creation_input_tokens += _as_int(
+                message.usage.get("cache_creation_input_tokens")
+            )
+            self.cache_read_input_tokens += _as_int(
+                message.usage.get("cache_read_input_tokens")
+            )
+            self.output_tokens += _as_int(message.usage.get("output_tokens"))
 
-        if message.cost_usd:
-            self.total_cost += message.cost_usd
+        cost = message.total_cost_usd
+        if cost is None:
+            cost = message.cost_usd
+        if cost:
+            self.total_cost += cost
 
         if message.type in ["user", "assistant"]:
             self.message_count += 1
@@ -205,7 +234,10 @@ class ClaudeOutputParser:
         """Reset parser state."""
         self.session_id = None
         self.model = None
-        self.total_tokens = 0
+        self.input_tokens = 0
+        self.cache_creation_input_tokens = 0
+        self.cache_read_input_tokens = 0
+        self.output_tokens = 0
         self.total_cost = 0.0
         self.message_count = 0
 
@@ -271,16 +303,26 @@ class OpenAIConverter:
         }
 
     @staticmethod
-    def calculate_usage(parser: ClaudeOutputParser) -> Dict[str, int]:
-        """Calculate token usage from parser."""
-        # Estimate prompt tokens (this is approximate)
-        prompt_tokens = max(0, parser.total_tokens - parser.message_count * 100)
-        completion_tokens = parser.total_tokens - prompt_tokens
+    def calculate_usage(parser: ClaudeOutputParser) -> Dict[str, Any]:
+        """OpenAI usage block from the CLI result usage.
 
+        prompt_tokens is everything the model read (fresh + cache write + cache
+        read); `prompt_tokens_details.cached_tokens` mirrors OpenAI's field for
+        the cache-read share, and the two extra keys expose what OpenAI has no
+        slot for.
+        """
+        prompt_tokens = (
+            parser.input_tokens
+            + parser.cache_creation_input_tokens
+            + parser.cache_read_input_tokens
+        )
         return {
             "prompt_tokens": prompt_tokens,
-            "completion_tokens": completion_tokens,
-            "total_tokens": parser.total_tokens,
+            "completion_tokens": parser.output_tokens,
+            "total_tokens": prompt_tokens + parser.output_tokens,
+            "prompt_tokens_details": {"cached_tokens": parser.cache_read_input_tokens},
+            "cache_creation_input_tokens": parser.cache_creation_input_tokens,
+            "total_cost_usd": parser.total_cost,
         }
 
 

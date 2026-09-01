@@ -56,7 +56,12 @@ class ClaudeMessage(BaseModel):
     result: Optional[str] = Field(None, description="Execution result")
     error: Optional[str] = Field(None, description="Error message")
     usage: Optional[Dict[str, Any]] = Field(None, description="Token usage")
-    cost_usd: Optional[float] = Field(None, description="Cost in USD")
+    cost_usd: Optional[float] = Field(None, description="Cost in USD (legacy CLI)")
+    total_cost_usd: Optional[float] = Field(
+        None, description="Cost in USD reported on the CLI result line"
+    )
+    num_turns: Optional[int] = Field(None, description="Turns in the CLI run")
+    duration_ms: Optional[int] = Field(None, description="CLI run duration")
     duration_ms: Optional[int] = Field(None, description="Duration in milliseconds")
     num_turns: Optional[int] = Field(None, description="Number of turns")
     timestamp: Optional[str] = Field(None, description="Timestamp")

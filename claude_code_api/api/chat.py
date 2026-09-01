@@ -14,6 +14,7 @@ from claude_code_api.core.claude_manager import (
     ClaudeSessionConflictError,
     create_project_directory,
 )
+from claude_code_api.core.config import settings
 from claude_code_api.core.session_manager import SessionManager
 from claude_code_api.models.claude import get_default_model, validate_claude_model
 from claude_code_api.models.openai import (
@@ -122,6 +123,12 @@ def _extract_prompts(request: ChatCompletionRequest) -> Tuple[str, str]:
         else request.system_prompt
     )
     return user_prompt, system_prompt
+
+
+def _isolation_requested(request: ChatCompletionRequest) -> bool:
+    if request.isolate_tools is not None:
+        return request.isolate_tools
+    return settings.isolate_tools_default
 
 
 async def _resolve_session(
@@ -346,6 +353,7 @@ async def create_chat_completion(request: ChatCompletionRequest, req: Request) -
 
         user_prompt, system_prompt = _extract_prompts(request)
         tool_mode = tools_enabled(request.tools, request.tool_choice)
+        isolate_tools = tool_mode or _isolation_requested(request)
         if tool_mode:
             system_prompt = build_tools_system_prompt(
                 request.tools, request.tool_choice, system_prompt
@@ -379,7 +387,7 @@ async def create_chat_completion(request: ChatCompletionRequest, req: Request) -
                 system_prompt=system_prompt,
                 on_cli_session_id=_register_cli_session,
                 json_schema=TOOL_RESPONSE_SCHEMA if tool_mode else None,
-                isolate_tools=tool_mode,
+                isolate_tools=isolate_tools,
             )
         except ClaudeSessionConflictError as e:
             logger.warning(

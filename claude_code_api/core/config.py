@@ -148,6 +148,10 @@ class Settings(BaseSettings):
     claude_api_key: str = ""
     default_model: str = "claude-sonnet-4-5-20250929"
     max_concurrent_sessions: int = 10
+    # Run every completion with built-in tools, user MCP servers and user
+    # settings disabled unless the request says otherwise. Single-turn API
+    # clients pay ~130k tokens of harness context per call without this.
+    isolate_tools_default: bool = False
     session_timeout_minutes: int = 30
 
     # Project Configuration

@@ -441,6 +441,15 @@ def create_non_streaming_response(
             "prompt_tokens": usage.get("prompt_tokens", 0),
             "completion_tokens": usage.get("completion_tokens", 0),
             "total_tokens": usage.get("total_tokens", 0),
+            **{
+                key: usage[key]
+                for key in (
+                    "prompt_tokens_details",
+                    "cache_creation_input_tokens",
+                    "total_cost_usd",
+                )
+                if key in usage
+            },
         },
         "session_id": session_id,
     }
