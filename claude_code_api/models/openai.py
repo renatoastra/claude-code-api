@@ -159,6 +159,14 @@ class ChatCompletionRequest(BaseModel):
         None, description="Session ID to continue conversation"
     )
     system_prompt: Optional[str] = Field(None, description="System prompt override")
+    isolate_tools: Optional[bool] = Field(
+        None,
+        description=(
+            "Run Claude Code with built-in tools, user MCP servers and user "
+            "settings disabled. Defaults to ISOLATE_TOOLS_DEFAULT; always on "
+            "when `tools` are supplied."
+        ),
+    )
 
 
 class ChatCompletionChoice(BaseModel):
@@ -179,6 +187,15 @@ class ChatCompletionUsage(BaseModel):
         ..., description="Number of tokens in the completion"
     )
     total_tokens: int = Field(..., description="Total number of tokens used")
+    prompt_tokens_details: Optional[Dict[str, int]] = Field(
+        None, description="Breakdown of prompt tokens (cached_tokens = cache reads)"
+    )
+    cache_creation_input_tokens: Optional[int] = Field(
+        None, description="Prompt tokens written to the prompt cache"
+    )
+    total_cost_usd: Optional[float] = Field(
+        None, description="Cost in USD as reported by the Claude Code CLI"
+    )
 
 
 class ChatCompletionResponse(BaseModel):

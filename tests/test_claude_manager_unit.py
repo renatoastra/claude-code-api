@@ -279,7 +279,9 @@ async def test_start_passes_json_schema_and_isolation_flags(monkeypatch):
     assert ok is True
     cmd = captured["cmd"]
     assert cmd[cmd.index("--json-schema") + 1] == '{"type": "object"}'
-    assert cmd[cmd.index("--tools") + 1] == ""
+    # StructuredOutput is a built-in tool: `--tools ""` would make the schema
+    # unanswerable, so isolation keeps the tool list when a schema is set.
+    assert "--tools" not in cmd
     assert "--strict-mcp-config" in cmd
     assert cmd[cmd.index("--setting-sources") + 1] == ""
     await process.stop()

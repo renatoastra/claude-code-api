@@ -7,6 +7,7 @@ from claude_code_api.models.claude import ClaudeMessage, ClaudeToolUse
 from claude_code_api.utils.parser import (
     ClaudeOutputParser,
     MessageAggregator,
+    OpenAIConverter,
     estimate_tokens,
     extract_error_from_message,
     format_timestamp,
@@ -100,6 +101,45 @@ def test_parse_message_updates_metrics():
     assert parser.total_tokens == 8
     assert parser.total_cost == 0.01
     assert parser.message_count == 1
+
+
+def test_parse_result_counts_cache_tokens_and_total_cost_usd():
+    # Shape of the CLI `result` line: prompt caching moves almost every prompt
+    # token into cache_creation/cache_read and cost lives in `total_cost_usd`.
+    parser = ClaudeOutputParser()
+    parser.parse_message(
+        ClaudeMessage(
+            type="result",
+            subtype="success",
+            session_id="sess",
+            usage={
+                "input_tokens": 2,
+                "cache_creation_input_tokens": 64968,
+                "cache_read_input_tokens": 110363,
+                "output_tokens": 4278,
+            },
+            total_cost_usd=0.3247,
+            num_turns=1,
+        )
+    )
+    assert parser.input_tokens == 2
+    assert parser.cache_creation_input_tokens == 64968
+    assert parser.cache_read_input_tokens == 110363
+    assert parser.output_tokens == 4278
+    assert parser.total_tokens == 2 + 64968 + 110363 + 4278
+    assert parser.total_cost == 0.3247
+
+    usage = OpenAIConverter.calculate_usage(parser)
+    assert usage["prompt_tokens"] == 2 + 64968 + 110363
+    assert usage["completion_tokens"] == 4278
+    assert usage["total_tokens"] == parser.total_tokens
+    assert usage["prompt_tokens_details"] == {"cached_tokens": 110363}
+    assert usage["cache_creation_input_tokens"] == 64968
+    assert usage["total_cost_usd"] == 0.3247
+
+    parser.reset()
+    assert parser.cache_read_input_tokens == 0
+    assert OpenAIConverter.calculate_usage(parser)["prompt_tokens"] == 0
 
 
 def test_error_extraction_helpers():

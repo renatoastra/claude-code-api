@@ -71,9 +71,11 @@ class ClaudeProcess:
                 cmd.extend(["--json-schema", json.dumps(json_schema)])
 
             if isolate_tools:
-                cmd.extend(
-                    ["--tools", "", "--strict-mcp-config", "--setting-sources", ""]
-                )
+                cmd.extend(["--strict-mcp-config", "--setting-sources", ""])
+                if json_schema is None:
+                    # `--tools ""` disables every built-in tool, including the
+                    # StructuredOutput tool that `--json-schema` answers through.
+                    cmd.extend(["--tools", ""])
 
             # Always use stream-json output format (exact order from working example)
             cmd.extend(
